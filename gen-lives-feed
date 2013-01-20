@@ -13,6 +13,8 @@ require 'csv'
 PROGNAME = File.basename($0)
 USAGE = "usage: #{PROGNAME} [OPTIONS ...] (try \"--help\")"
 
+TIMESTAMP = Time.now.to_i
+
 # Location of source data.
 URL_DATA_FEED = "https://data.austintexas.gov/api/views/ecmv-9xxi/rows.json"
 
@@ -120,10 +122,8 @@ end
 
 die(USAGE) unless ARGV.empty?
 
-if File.exist?(@options.destination)
-  die("destination file already exists (specify \"--force\" to force overwrite)") unless @options.force
-  @log.debug("unlinking existing file: #{@options.destination}")
-  File.unlink(@options.destination)
+if File.exist?(@options.destination) && !@options.force
+  die("destination file already exists (specify \"--force\" to force overwrite)")
 end
 
 # Build artifacts in a temporary directory.
@@ -302,12 +302,15 @@ Dir.mktmpdir("lives") do |dir|
     (@log.level <= Logger::INFO ? '--verbose' : '--quiet'),
     "--recurse-paths",
     "--junk-paths",
-    @options.destination,
+    "#{@options.destination}.#{TIMESTAMP}",
     dir
   ];
   @log.debug("executing: #{cmd.join(' ')}")
   system(*cmd)
   
 end # Dir.mktmpdir
+
+File.unlink(@options.destination) if File.exist?(@options.destination)
+File.rename("#{@options.destination}.#{TIMESTAMP}", @options.destination)
 
 @log.info("archive complete: #{@options.destination}")

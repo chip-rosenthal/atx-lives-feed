@@ -13,17 +13,44 @@ require 'csv'
 PROGNAME = File.basename($0)
 USAGE = "usage: #{PROGNAME} [OPTIONS ...] (try \"--help\")"
 
+# Version of the LIVES standard this implements, for "feed_info.csv".
+# XXX - This is required by the standard, but the standard doesn't declare a version number. Srsly.
+LIVES_VERSION = "unknown"
+
 # Location of source data.
 URL_DATA_FEED = "https://data.austintexas.gov/api/views/ecmv-9xxi/rows.json"
 
-# URL of city website, for "feed_info.csv"
+# Municipality name, for "feed_info.csv".
+MUNI_NAME = "Austin, TX"
+  
+# URL of city website, for "feed_info.csv".
 URL_MUNI_SITE = "http://www.austintexas.gov/"
 
-# Email address of contact person, for "feed_info.csv"
+# Email address of contact person, for "feed_info.csv".
 EMAIL_CONTACT = "info@open-austin.org"
 
-# Version of the LIVES standard this implements, for "feed_info.csv"
-LIVES_VERSION = "unknown"
+# Content for README inserted into archive.
+README_CONTENT = %Q[LIVES Data Feed for Austin, TX
+      
+This archive contains restaurant inspection data from Austin, TX.
+
+It is formatted to the "Local Inspector Value-Entry Specification"
+(LIVES) data standard.
+
+      http://www.yelp.com/healthscores
+
+This data feed is produced by Open Austin (www.open-austin.org)
+based on data published by the City of Austin (data.austintexas.gov).
+
+City of Austin publishes its restaurant scores at:
+
+      #{URL_DATA_FEED}
+
+Problems with data values should be addressed to the City of Austin.
+
+Problems with the file formats should be address to Open Austin. You
+can reach us at #{EMAIL_CONTACT}.
+]
 
 @log = Logger.new($stderr)
 @log.level = Logger::INFO
@@ -54,12 +81,12 @@ begin
       "Suppress informational log messages. Sets log level to WARN."
     ) {|flag| @log.level = (flag ? Logger::WARN : Logger::INFO)}
       
-    opts.on("-s", "--source FILE_OR_URI",
-      "Specify data source, either a local file or URI. [default: #{@options.source}"
+    opts.on("-s", "--source PATH",
+      "Specify data source, either a local file or URI. [default: #{@options.source}]"
     ) {|source| @options.source = source}
       
-    opts.on("d", "--destination FILE",
-      "Specify output file. [default: #{@options.destination}"
+    opts.on("-d", "--destination PATH",
+      "Specify output file. [default: #{@options.destination}]"
     ) {|destination| @options.destination = destination}
       
     opts.on("--zip PATH",
@@ -77,9 +104,7 @@ end
 
 die(USAGE) unless ARGV.empty?
 
-#
-# Create a temporary directory where all the artifacts will be constructed.
-#
+# Build artifacts in a temporary directory.
 Dir.mktmpdir("lives") do |dir|  
   @log.info("created temporary directory: #{dir}")  
   
@@ -92,11 +117,9 @@ Dir.mktmpdir("lives") do |dir|
   @inspections = CSV.open("#{dir}/inspections.csv", "wb")
   @inspections << %w(business_id score date description type)
   
-  #
-  # Process the source data.
-  #
   @log.info("opening source: #{@options.source}")
-  open(@options.source) do |fp|    
+  open(@options.source) do |fp|  
+      
     raw = JSON.load(fp)
     
     # Produce list of column names, for elements in the "data" rows.
@@ -149,6 +172,7 @@ Dir.mktmpdir("lives") do |dir|
       # City of Austin isn't publishing an id, so cobble up something.
       business_id = Digest::MD5.hexdigest("#{h["Restaurant Name"]}|#{address["address"]}")
         
+      # If we haven't seen this business before, add it to the dataset.
       if ! @did_business.has_key?(business_id)
         @businesses << [
           # Name            Type    Required  Description   
@@ -203,19 +227,16 @@ Dir.mktmpdir("lives") do |dir|
         nil,          
       ]
     
-    end # each row
-    
+    end # each row    
   end # open
 
   @businesses.close
-  @log.info("processed #{@businesses.lineno} business records")
+  @log.info("produced #{@businesses.lineno} business records")
   
   @inspections.close
-  @log.info("processed #{@inspections.lineno} inspection records")      
+  @log.info("produced #{@inspections.lineno} inspection records")      
 
-  #
   # Create "feed_info" file.
-  #
   CSV.open("#{dir}/feed_info.csv", "wb") do |csv|
     csv << %w(feed_date feed_version municipality_name municipality_url contact_email)
     csv << [
@@ -228,7 +249,7 @@ Dir.mktmpdir("lives") do |dir|
       LIVES_VERSION,
         
       # municipality_name string  Yes  Name of the municipality providing this feed. For example ‘San Francisco’ or ‘Multnomah County’
-      "Austin, TX",
+      MUNI_NAME,
         
       # municipality_url  string  No   URL of the publishing municipality’s website
       URL_MUNI_SITE,
@@ -239,40 +260,19 @@ Dir.mktmpdir("lives") do |dir|
       ]
   end
   
-  #
   # Create a README for the archive.
-  #
+  # This is not part of the LIVES standard, but seems helpful and hopefully won't break anything.
   open("#{dir}/README.txt", "w") do |readme|
-    readme << %Q[LIVES Data Feed for Austin, TX
-      
-This archive contains restaurant inspection data from Austin, TX.
-
-It is formatted to the "Local Inspector Value-Entry Specification"
-(LIVES) data standard.
-
-      http://www.yelp.com/healthscores
-
-This data feed is produced by Open Austin (www.open-austin.org)
-based on data published by the City of Austin (data.austintexas.gov).
-
-City of Austin publishes its restaurant scores at:
-
-      #{URL_DATA_FEED}
-
-Problems with data values should be addressed to the City of Austin.
-
-Problems with the file formats should be address to Open Austin. You
-can reach us at #{EMAIL_CONTACT}.
-]      
+    readme << README_CONTENT
   end  
   
-  #
   # Data processing complete. Archive it up.
-  #
   @log.info("invoking #{@options.path_zip} to generate archive")
-  verbosity = ( @log.level <= Logger::INFO ? 'v' : 'q')
-  system(@options.path_zip, "-rj#{verbosity}", @options.destination, dir)
+  verbosity = (@log.level <= Logger::INFO ? '--verbose' : '--quiet')
+  cmd = [@options.path_zip, "--recurse-paths", "--junk-paths", verbosity, @options.destination, dir];
+  @log.debug("executing: #{cmd.join(' ')}")
+  system(*cmd)
   
 end # Dir.mktmpdir
 
-@log.info("data saved to: #{@options.destination}")
+@log.info("archive complete: #{@options.destination}")

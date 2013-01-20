@@ -1,0 +1,261 @@
+#!/usr/bin/env ruby
+
+require 'rubygems'
+require 'logger'
+require 'optparse'
+require 'ostruct'
+require 'open-uri'
+require 'digest/md5'
+require 'tmpdir'
+require 'json'
+require 'csv'
+
+PROGNAME = File.basename($0)
+USAGE = "usage: #{PROGNAME} [OPTIONS ...] (try \"--help\")"
+
+@log = Logger.new($stderr)
+@log.level = Logger::INFO
+
+def die(*mssg)
+  mssg[0].insert(0, PROGNAME + ": ") unless mssg[0] =~ /^usage:/
+  STDERR.puts(mssg)
+  exit(1)
+end
+
+@options = OpenStruct.new({
+  :source => "https://data.austintexas.gov/api/views/ecmv-9xxi/rows.json",
+  :destination => "lives.ci.austin.tx.us.zip",
+  :path_zip => "zip",
+})
+
+begin
+  OptionParser.new do |opts|
+
+    opts.banner = USAGE
+    opts.separator "\noptions:"
+
+    opts.on("-v", "--[no-]verbose",
+      "Show debugging log messages. Sets log level to DEBUG."
+    ) {|flag| @log.level = (flag ? Logger::DEBUG : Logger::INFO)}
+
+    opts.on("-q", "--[no-]quiet",
+      "Suppress informational log messages. Sets log level to WARN."
+    ) {|flag| @log.level = (flag ? Logger::WARN : Logger::INFO)}
+      
+    opts.on("-s", "--source FILE_OR_URI",
+      "Specify data source, either a local file or URI. [default: #{@options.source}"
+    ) {|source| @options.source = source}
+      
+    opts.on("d", "--destination FILE",
+      "Specify output file. [default: #{@options.destination}"
+    ) {|destination| @options.destination = destination}
+      
+    opts.on("-h", "-?", "--help",
+      "Show help, including default values."
+    ) {puts opts; exit}
+
+  end.parse!
+rescue OptionParser::ParseError => e
+  die(e.message, USAGE)
+end
+
+die(USAGE) unless ARGV.empty?
+
+
+Dir.mktmpdir("lives") do |dir|  
+  @log.info("created temporary directory: #{dir}")  
+  
+  @businesses = CSV.open("#{dir}/businesses.csv", "wb")
+  @businesses << %w(business_id name address city state postal_code latitude longitude phone_number)
+  
+  @did_business = {}
+  
+  @inspections = CSV.open("#{dir}/inspections.csv", "wb")
+  @inspections << %w(business_id score date description type)
+  
+  #
+  # Process the source data.
+  #
+  @log.info("opening source: #{@options.source}")
+  open(@options.source) do |fp|    
+    raw = JSON.load(fp)
+    
+    # Produce list of column names, for elements in the "data" rows.
+    cols = raw["meta"]["view"]["columns"].map {|a| a["name"]}
+    
+    # Iterate on each row in the dataset.
+    raw["data"].each do |row|
+      
+      # Ruby magic. Produces a hash from list of col names and list of data values.
+      h = Hash[[cols, row].transpose]
+       
+      # Example:
+      # 
+      # h = {
+      #   "sid" => 12412,
+      #   "id" => "0FF676CD-43A9-4898-B7FB-8C3CEF3D209F",
+      #   "position" => 12412,
+      #   "created_at" => 1358436716,
+      #   "created_meta" => "433740",
+      #   "updated_at" => 1358437071,
+      #   "updated_meta" => "433740",
+      #   "meta" => "{\n}",
+      #   "Restaurant Name" => "Papa Murphy Take-N-Bake Pizza",
+      #   "Zip Code" => "78750",
+      #   "Inspection Date" => 1346137200,
+      #   "Score" => "92",
+      #   "Address" => [
+      #     "{\"address\":\"12129 N FM 620 RD Bldg A\",\"city\":\"AUSTIN\",\"state\":\"TX\",\"zip\":\"78750\"}",
+      #    "30.43180000017003",
+      #    "-97.8007700000353",
+      #    nil,
+      #    false
+      #  ]
+      # }
+      #
+        
+      #
+      # Elements of the "Address" list are:
+      #
+      #   * human_address
+      #   * latitude
+      #   * longitude
+      #   * machine_address
+      #   * needs_recoding
+      #      
+      address = JSON.parse(h["Address"][0])
+      latitude = h["Address"][1]
+      longitude = h["Address"][2]
+      
+      #
+      # City of Austin isn't publishing an id, so cobble up something unique.
+      #
+      business_id = Digest::MD5.hexdigest("#{h["Restaurant Name"]}|#{address["address"]}")
+        
+      if ! @did_business.has_key?(business_id)      
+        @businesses << [
+          # Name            Type    Required  Description   
+               
+          # business_id     string  Yes Unique identifier for the business. For many cities, this may be the license number.
+          business_id,
+          
+          # name            string  Yes Common name of the business
+          h["Restaurant Name"],        
+         
+          # address         string  Yes Street address of the business. For example: 706 Mission St.
+          address["address"],        
+         
+          # city            string  No  City of the business. This field must be included if the file contains businesses from multiple cities.
+          address["city"],        
+         
+          # state           string  No  State or province for the business. In the U.S. this should be the two-letter code for the state.
+          address["state"],        
+         
+          # postal_code     string  No  Zip code or other postal code.
+          address["zip"],        
+         
+          # latitude        number  No  Latitude of the business. This field must be a valid WGS 84 latitude. For example: 37.7859547
+          latitude,        
+          
+          # longitude       number  No  Longitude of the business. This field must be a valid WGS 84 longitude. For example: -122.4024658
+          longitude,        
+    
+          # phone_number    string  No  Phone number for a business including country specific dialing information. For example: +14159083801
+          nil,
+        ]
+        
+        @did_business[business_id] = true      
+      end
+      
+      @inspections << [
+        # Name            Type    Required  Description           
+        
+        # business_id     string  Yes   Unique identifier of the business for which this inspection was done
+        business_id,
+          
+        # score           number  No*   Inspection score on a 0-100 scale. 100 is the highest score        
+        h["Score"],
+          
+        # date            date    Yes   Date of the inspection in YYYYMMDD format
+        Time.at(h["Inspection Date"]).strftime("%Y%m%d"),
+          
+        # description     string  No    Single line description containing details on the outcome of an inspection. Use of this field is only encouraged if no violations are provided.
+        nil,
+          
+        # type            string  No    String representing the type of inspection. Must be (initial, routine, followup, complaint)
+        nil,          
+      ]
+    
+    end # each row
+    
+  end # open
+
+  @businesses.close
+  @log.info("processed #{@businesses.lineno} business records")
+  
+  @inspections.close
+  @log.info("processed #{@inspections.lineno} inspection records")      
+
+  #
+  # Create "feed_info" file.
+  #
+  CSV.open("#{dir}/feed_info.csv", "wb") do |csv|
+    csv << %w(feed_date feed_version municipality_name municipality_url contact_email)
+    csv << [
+      # Name              Type    Required  Description   
+                
+      # feed_date         date    Yes  Date this feed was generated in YYYYMMDD format
+      Time.now.strftime("%Y%m%d"),
+      
+      # feed_version      string  Yes  Version of the LIVES specification used to generate this feed. For example ‘0.4.1’
+      "unknown",
+        
+      # municipality_name string  Yes  Name of the municipality providing this feed. For example ‘San Francisco’ or ‘Multnomah County’
+      "Austin, TX",
+        
+      # municipality_url  string  No   URL of the publishing municipality’s website
+      "http://www.austintexas.gov/",
+     
+      # contact_email     string  No   Email address of the person to contact regarding invalid data in this feed
+      "info@open-austin.org",
+        
+      ]
+  end
+  
+  #
+  # Create a README for the archive.
+  #
+  open("#{dir}/README.txt", "w") do |readme|
+    readme << %q[LIVES Data Feed for Austin, TX
+      
+This archive contains restaurant inspection data from Austin, TX.
+
+It is formatted to the "Local Inspector Value-Entry Specification"
+(LIVES) data standard.
+
+      http://www.yelp.com/healthscores
+
+This data feed is produced by Open Austin (www.open-austin.org)
+based on data published by the City of Austin (data.austintexas.gov).
+
+City of Austin publishes its restaurant scores at:
+
+      https://data.austintexas.gov/api/views/ecmv-9xxi/rows.json
+
+Problems with data values should be addressed to the City of Austin.
+
+Problems with the file formats should be address to Open Austin. You
+can reach us at info@open-austin.org.
+]      
+  end  
+  
+  #
+  # Data processing complete. Archive it up.
+  #
+  @log.info("invoking #{@options.path_zip} to generate archive")
+  verbosity = ( @log.level <= Logger::INFO ? 'v' : 'q')
+  system(@options.path_zip, "-rj#{verbosity}", @options.destination, dir)
+  
+end # Dir.mktmpdir
+
+@log.info("data saved to: #{@options.destination}")

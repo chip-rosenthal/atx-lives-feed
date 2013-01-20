@@ -29,6 +29,17 @@ URL_MUNI_SITE = "http://www.austintexas.gov/"
 # Email address of contact person, for "feed_info.csv".
 EMAIL_CONTACT = "info@open-austin.org"
 
+# Content for "legend.csv" file.
+SCORE_LEGENDS = [
+  # Name          Type    Required  Description
+  # minimum_score number  Yes Minimum score that can be classified with this description
+  # maximum_score number  Yes Maximum score that can be classified with this description
+  # description   string  Yes Formatted version of the score in the format typically presented by the municipality. For example ‘A’ or ‘Pass’
+  %w(minimum_score maximum_score description),
+  [70, 100, "pass"],
+  [0, 69, "re-inspection required"],
+]  
+
 # Content for README inserted into archive.
 README_CONTENT = %Q[LIVES Data Feed for Austin, TX
       
@@ -62,6 +73,7 @@ def die(*mssg)
 end
 
 @options = OpenStruct.new({
+  :force => false,
   :source => URL_DATA_FEED,
   :destination => "lives.ci.austin.tx.us.zip",
   :path_zip => "zip",
@@ -89,6 +101,10 @@ begin
       "Specify output file. [default: #{@options.destination}]"
     ) {|destination| @options.destination = destination}
       
+    opts.on("-f", "--[no-]force",
+      "Force overwrite of existing destination file. [default: #{@options.force}]"
+    ) {|flag| @options.force = flag}
+      
     opts.on("--zip PATH",
       "Pathname to the \"zip\" program to use. [default: #{@options.path_zip}]"
     ) {|path| @options.path_zip = path}
@@ -103,6 +119,12 @@ rescue OptionParser::ParseError => e
 end
 
 die(USAGE) unless ARGV.empty?
+
+if File.exist?(@options.destination)
+  die("destination file already exists (specify \"--force\" to force overwrite)") unless @options.force
+  @log.debug("unlinking existing file: #{@options.destination}")
+  File.unlink(@options.destination)
+end
 
 # Build artifacts in a temporary directory.
 Dir.mktmpdir("lives") do |dir|  
@@ -258,6 +280,13 @@ Dir.mktmpdir("lives") do |dir|
       EMAIL_CONTACT,
         
       ]
+  end
+
+  # Create "legend" file.
+  CSV.open("#{dir}/legend.csv", "wb") do |csv|
+    SCORE_LEGENDS.each do |a|
+      csv << a
+    end
   end
   
   # Create a README for the archive.

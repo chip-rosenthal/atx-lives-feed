@@ -13,12 +13,12 @@ require 'csv'
 PROGNAME = File.basename($0)
 USAGE = "usage: #{PROGNAME} [OPTIONS ...] (try \"--help\")"
 
+# Location of source data.
+URL_DATA_FEED = "https://data.austintexas.gov/api/views/ecmv-9xxi/rows.json"
+
 # Version of the LIVES standard this implements, for "feed_info.csv".
 # XXX - This is required by the standard, but the standard doesn't declare a version number. Srsly.
 LIVES_VERSION = "unknown"
-
-# Location of source data.
-URL_DATA_FEED = "https://data.austintexas.gov/api/views/ecmv-9xxi/rows.json"
 
 # Municipality name, for "feed_info.csv".
 MUNI_NAME = "Austin, TX"
@@ -37,14 +37,14 @@ This archive contains restaurant inspection data from Austin, TX.
 It is formatted to the "Local Inspector Value-Entry Specification"
 (LIVES) data standard.
 
-      http://www.yelp.com/healthscores
+  http://www.yelp.com/healthscores
 
 This data feed is produced by Open Austin (www.open-austin.org)
 based on data published by the City of Austin (data.austintexas.gov).
 
 City of Austin publishes its restaurant scores at:
 
-      #{URL_DATA_FEED}
+  https://data.austintexas.gov/dataset/Restaurant-Inspection-Scores/ecmv-9xxi
 
 Problems with data values should be addressed to the City of Austin.
 
@@ -268,8 +268,14 @@ Dir.mktmpdir("lives") do |dir|
   
   # Data processing complete. Archive it up.
   @log.info("invoking #{@options.path_zip} to generate archive")
-  verbosity = (@log.level <= Logger::INFO ? '--verbose' : '--quiet')
-  cmd = [@options.path_zip, "--recurse-paths", "--junk-paths", verbosity, @options.destination, dir];
+  cmd = [
+    @options.path_zip,
+    (@log.level <= Logger::INFO ? '--verbose' : '--quiet'),
+    "--recurse-paths",
+    "--junk-paths",
+    @options.destination,
+    dir
+  ];
   @log.debug("executing: #{cmd.join(' ')}")
   system(*cmd)
   

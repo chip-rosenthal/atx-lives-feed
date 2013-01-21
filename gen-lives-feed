@@ -139,7 +139,7 @@ Dir.mktmpdir("lives") do |dir|
   @inspections = CSV.open("#{dir}/inspections.csv", "wb")
   @inspections << %w(business_id score date description type)
   
-  @log.info("opening source: #{@options.source}")
+  @log.info("processing source: #{@options.source}")
   open(@options.source) do |fp|  
       
     raw = JSON.load(fp)

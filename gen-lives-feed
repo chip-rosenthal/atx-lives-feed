@@ -76,6 +76,7 @@ end
 
 @options = OpenStruct.new({
   :force => false,
+  :old_id_style => false,
   :source => URL_DATA_FEED,
   :destination => "lives.ci.austin.tx.us.zip",
   :path_zip => "zip",
@@ -106,6 +107,10 @@ begin
     opts.on("-f", "--[no-]force",
       "Force overwrite of existing destination file. [default: #{@options.force}]"
     ) {|flag| @options.force = flag}
+    
+    opts.on("--old-id-style",
+      "Produce \"business id\" values with original algorighm, rather than using \"facility id\" provided in the dataset. [default: #{@options.old_id_style}]"
+    ) {|flag| @options.old_id_style = flag}    
       
     opts.on("--zip PATH",
       "Pathname to the \"zip\" program to use. [default: #{@options.path_zip}]"
@@ -125,6 +130,7 @@ die(USAGE) unless ARGV.empty?
 if File.exist?(@options.destination) && !@options.force
   die("destination file already exists (specify \"--force\" to force overwrite)")
 end
+
 
 # Build artifacts in a temporary directory.
 Dir.mktmpdir("lives") do |dir|  
@@ -154,29 +160,31 @@ Dir.mktmpdir("lives") do |dir|
       h = Hash[[cols, row].transpose]
        
       # Example:
-      # 
+      #       
       # h = {
-      #   "sid" => 12412,
-      #   "id" => "0FF676CD-43A9-4898-B7FB-8C3CEF3D209F",
-      #   "position" => 12412,
-      #   "created_at" => 1358436716,
+      #   "sid" => 10,
+      #   "id" => "1D7AE41C-BFE4-4B5A-A09C-1D5C3CA08CD7",
+      #   "position" => 10,
+      #   "created_at" => 1372275357,
       #   "created_meta" => "433740",
-      #   "updated_at" => 1358437071,
+      #   "updated_at" => 1372277924,
       #   "updated_meta" => "433740",
       #   "meta" => "{\n}",
-      #   "Restaurant Name" => "Papa Murphy Take-N-Bake Pizza",
-      #   "Zip Code" => "78750",
-      #   "Inspection Date" => 1346137200,
-      #   "Score" => "92",
+      #   "Restaurant Name" => "111 Murphys Deli",
+      #   "Zip Code" => "78701",
+      #   "Inspection Date" => 1358323200,
+      #   "Score" => "85",
       #   "Address" => [
-      #     "{\"address\":\"12129 N FM 620 RD Bldg A\",\"city\":\"AUSTIN\",\"state\":\"TX\",\"zip\":\"78750\"}",
-      #    "30.43180000017003",
-      #    "-97.8007700000353",
-      #    nil,
-      #    false
-      #  ]
+      #     "{\"address\":\"111 CONGRESS AVE\",\"city\":\"AUSTIN\",\"state\":\"TX\",\"zip\":\"78701\"}",
+      #     "30.26392016200049",
+      #     "-97.74431093299967",
+      #     nil,
+      #     false
+      #   ],
+      #   "Facility ID" => "10637887",
+      #   "Process Description" => "Routine Inspection"
       # }
-      #
+      #      
         
       #
       # Elements of the h["Address"] list are:
@@ -191,8 +199,11 @@ Dir.mktmpdir("lives") do |dir|
       latitude = h["Address"][1]
       longitude = h["Address"][2]
       
-      # City of Austin isn't publishing an id, so cobble up something.
-      business_id = Digest::MD5.hexdigest("#{h["Restaurant Name"]}|#{address["address"]}")
+      business_id = if @options.old_id_style
+        Digest::MD5.hexdigest("#{h["Restaurant Name"]}|#{address["address"]}")
+      else
+        h["Facility ID"]
+      end  
         
       # If we haven't seen this business before, add it to the dataset.
       if ! @did_business.has_key?(business_id)
